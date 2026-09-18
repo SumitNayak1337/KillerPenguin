@@ -1,0 +1,6 @@
+# Generated reconnaissance results
+results/
+
+# Local configuration and secrets
+.env
+.env.local

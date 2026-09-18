@@ -1,625 +1,301 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# KillerPenguin — lightweight reconnaissance and Linux utility toolkit
+# https://github.com/SumitNayak1337/KillerPenguin
 
-# ╔═══════════════════════════════════════════════════════════════════╗
-# ║            KILLERPENGUIN MASTER — v2.0                           ║
-# ║     Bug Bounty Recon + Linux Utility Toolkit                     ║
-# ║     Author: Sumit | github.com/SumitNayak1337                    ║
-# ╚═══════════════════════════════════════════════════════════════════╝
+set -o pipefail
 
-# ========================== CONFIGURATION ===========================
-VT_API_KEY="add_your_api_key"       # VirusTotal API Key
+readonly APP_NAME="KillerPenguin"
+readonly VERSION="2.1.0"
+if [[ "${BASH_SOURCE[0]}" == */* ]]; then
+    readonly SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
+else
+    readonly SCRIPT_DIR="$PWD"
+fi
+readonly OUTPUT_ROOT="${KILLERPENGUIN_OUTPUT_DIR:-$SCRIPT_DIR/results}"
+readonly CURL_COMMON=(--fail --silent --show-error --location --connect-timeout 10 --max-time 45)
 
-# ========================== COLORS ==================================
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;34m'
-MAGENTA='\033[1;35m'
-CYAN='\033[1;36m'
-WHITE='\033[1;37m'
-BOLD='\033[1m'
-DIM='\033[2m'
-RESET='\033[0m'
+RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'; CYAN='\033[1;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-# ========================== HELPERS =================================
+info()    { printf '  %b[*]%b %s\n' "$CYAN" "$RESET" "$*"; }
+success() { printf '  %b[+]%b %s\n' "$GREEN" "$RESET" "$*"; }
+warn()    { printf '  %b[!]%b %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+error()   { printf '  %b[-]%b %s\n' "$RED" "$RESET" "$*" >&2; }
+header()  { printf '\n%b%s%b\n' "$BOLD$CYAN" "── $* ──" "$RESET"; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+require_linux() {
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        error "$APP_NAME supports native Linux environments only."
+        error "Run it from a Linux terminal, not PowerShell, Command Prompt, Git Bash, or macOS."
+        return 1
+    fi
+}
+
 banner() {
-    local art
-    art=$(cat <<'EOF'
-
-  ██╗  ██╗██╗██╗     ██╗     ███████╗██████╗ 
-  ██║ ██╔╝██║██║     ██║     ██╔════╝██╔══██╗
-  █████╔╝ ██║██║     ██║     █████╗  ██████╔╝
-  ██╔═██╗ ██║██║     ██║     ██╔══╝  ██╔══██╗
-  ██║  ██╗██║███████╗███████╗███████╗██║  ██║
-  ╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
-  ██████╗ ███████╗███╗   ██╗ ██████╗ ██╗   ██╗██╗███╗   ██╗
-  ██╔══██╗██╔════╝████╗  ██║██╔════╝ ██║   ██║██║████╗  ██║
-  ██████╔╝█████╗  ██╔██╗ ██║██║  ███╗██║   ██║██║██╔██╗ ██║
-  ██╔═══╝ ██╔══╝  ██║╚██╗██║██║   ██║██║   ██║██║██║╚██╗██║
-  ██║     ███████╗██║ ╚████║╚██████╔╝╚██████╔╝██║██║ ╚████║
-  ╚═╝     ╚══════╝╚═╝  ╚═══╝ ╚═════╝  ╚═════╝ ╚═╝╚═╝  ╚═══╝
-         .---.
-        /     \        ╔══════════════════════════════════╗
-       | o _ o |       ║  Bug Bounty Recon + Linux Tools  ║
-       |  \_/  |       ║         MASTER TOOLKIT v2.0      ║
-  .----._____.----.    ║           by  Sumit              ║
- (______I_I_I______)   ╚══════════════════════════════════╝
+    cat <<'EOF'
+  _  ___ _ _           ___                 _
+ | |/ (_) | | ___ _ __| _ \___ _ _  __ _ _ _(_)_ _
+ | ' <| | | |/ -_) '_ \  _/ -_) ' \/ _` | '_| | ' \
+ |_|\_\_|_|_|\___|_| |_|_| \___|_||_\__, |_| |_|_||_|
+                                      |___/
 EOF
-)
-    if command -v lolcat &> /dev/null; then
-        echo "$art" | lolcat
-    else
-        echo -e "${CYAN}${art}${RESET}"
-    fi
-    echo ""
+    printf '  %b%s v%s%b — recon and Linux utilities\n\n' "$BOLD$CYAN" "$APP_NAME" "$VERSION" "$RESET"
 }
 
-info()    { echo -e "    ${CYAN}[*]${RESET} $1"; }
-success() { echo -e "    ${GREEN}[+]${RESET} $1"; }
-warn()    { echo -e "    ${YELLOW}[!]${RESET} $1"; }
-error()   { echo -e "    ${RED}[-]${RESET} $1"; }
-header()  { echo -e "\n${MAGENTA}${BOLD}══════ $1 ══════${RESET}"; }
-divider() { echo -e "${DIM}────────────────────────────────────────────────────${RESET}"; }
-
-# ======================== DEPENDENCY CHECK ==========================
-check_dependencies() {
-    header "Dependency Check"
-    local all_deps=("nmap" "curl" "wget" "subfinder" "assetfinder" "httpx"
-                    "gau" "katana" "wafw00f" "speedtest-cli" "lolcat" "yt-dlp")
-    local missing=0
-
-    for cmd in "${all_deps[@]}"; do
-        if command -v "$cmd" &> /dev/null; then
-            success "$cmd — installed"
-        else
-            warn "$cmd — NOT FOUND (some features may be unavailable)"
-            ((missing++))
-        fi
-    done
-
-    if [ "$missing" -eq 0 ]; then
-        echo ""
-        success "All dependencies are installed! You're good to go."
-    else
-        echo ""
-        warn "$missing tool(s) missing. Install them for full functionality."
-    fi
-    echo ""
-}
-
-# ======================== CLI USAGE HELP ============================
 usage() {
-    echo -e "${BOLD}Usage:${RESET} $0 ${CYAN}[MODE]${RESET}"
-    echo ""
-    echo -e "${BOLD}Bug Bounty Recon Mode (CLI Flags):${RESET}"
-    echo -e "  $0 ${GREEN}-d <domain>${RESET} [FLAGS]"
-    echo -e "    ${GREEN}-s${RESET}   Subdomains + Live Probing"
-    echo -e "    ${GREEN}-w${RESET}   WAF Detection + VirusTotal Lookup"
-    echo -e "    ${GREEN}-g${RESET}   URL Gathering (Gau + Katana)"
-    echo -e "    ${GREEN}-a${RESET}   Run ALL recon modules"
-    echo ""
-    echo -e "${BOLD}Interactive Mode:${RESET}"
-    echo -e "  $0             Launch the full interactive menu"
-    echo ""
-    echo -e "${BOLD}Other:${RESET}"
-    echo -e "  $0 ${GREEN}--check${RESET}     Check all dependencies"
-    echo -e "  $0 ${GREEN}-h${RESET}          Show this help"
-    echo ""
-    echo -e "${BOLD}Examples:${RESET}"
-    echo -e "  $0 -d example.com -s -w"
-    echo -e "  $0 -d example.com -a"
-    echo -e "  $0"
-    exit 1
+    cat <<EOF
+${APP_NAME} v${VERSION}
+
+Usage:
+  $0 menu
+  $0 doctor
+  $0 recon <subs|waf|urls|all> <domain>
+  $0 scan ports <host>
+  $0 report <result-directory>
+  $0 --version
+
+Examples:
+  $0 recon all example.com
+  $0 recon subs example.com
+  $0 scan ports 192.0.2.10
+  $0 report results/example.com_2026-09-18_120000
+
+Legacy flags are still supported:
+  $0 -d example.com -s -w -g
+  $0 -d example.com -a
+
+Configuration:
+  VT_API_KEY                 Optional VirusTotal API key for the waf module
+  KILLERPENGUIN_OUTPUT_DIR   Directory for scan results (default: ./results)
+EOF
 }
 
-# ════════════════════════════════════════════════════════════════════
-#                     BUG BOUNTY RECON MODULES
-# ════════════════════════════════════════════════════════════════════
+validate_domain() {
+    local target=${1,,}
+    [[ "$target" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]
+}
 
-# --- Subdomains & Live Probing ---
+validate_host() {
+    local target=$1
+    validate_domain "$target" || [[ "$target" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+safe_result_name() { printf '%s' "$1" | tr -cd 'A-Za-z0-9.-' | tr '.' '_'; }
+
+create_scan_directory() {
+    local target=$1 name timestamp dir
+    name=$(safe_result_name "$target")
+    timestamp=$(date '+%Y-%m-%d_%H%M%S')
+    dir="$OUTPUT_ROOT/${name}_${timestamp}"
+    mkdir -p -- "$dir" || return 1
+    printf '%s' "$dir"
+}
+
+line_count() { [[ -f "$1" ]] && wc -l < "$1" | tr -d ' ' || printf '0'; }
+
+write_summary() {
+    local target=$1 scan_dir=$2 mode=$3 now subs urls live
+    now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    subs=$(line_count "$scan_dir/all_subdomains.txt")
+    urls=$(line_count "$scan_dir/all_urls.txt")
+    live=$(line_count "$scan_dir/live_results.txt")
+    cat > "$scan_dir/summary.md" <<EOF
+# KillerPenguin scan summary
+
+- Target: \`$target\`
+- Mode: \`$mode\`
+- Completed: $now
+- Unique subdomains: $subs
+- Live hosts: $live
+- Unique URLs: $urls
+
+See the individual result files in this directory for raw tool output.
+EOF
+    printf '{\n  "tool": "KillerPenguin",\n  "version": "%s",\n  "target": "%s",\n  "mode": "%s",\n  "completed_at": "%s",\n  "subdomains": %s,\n  "live_hosts": %s,\n  "urls": %s\n}\n' \
+        "$VERSION" "$target" "$mode" "$now" "$subs" "$live" "$urls" > "$scan_dir/summary.json"
+}
+
+check_dependencies() {
+    local dependencies=(curl nmap subfinder assetfinder httpx gau katana wafw00f yt-dlp speedtest-cli)
+    local missing=0 cmd
+    header "Environment check"
+    for cmd in "${dependencies[@]}"; do
+        if command_exists "$cmd"; then success "$cmd available"; else warn "$cmd missing"; ((missing++)); fi
+    done
+    printf '\n'
+    if (( missing == 0 )); then success "All optional tools are available."; else warn "$missing optional tool(s) are unavailable."; fi
+    info "Results directory: $OUTPUT_ROOT"
+}
+
 run_subs() {
-    local target="$1"
-    local out_dir="$2"
-    header "SUBDOMAIN ENUMERATION — $target"
-
-    # Subfinder
-    if command -v subfinder &> /dev/null; then
-        info "Running Subfinder..."
-        subfinder -d "$target" -silent > "$out_dir/subs_subfinder.txt" 2>/dev/null
-        success "Subfinder done — $(wc -l < "$out_dir/subs_subfinder.txt") results"
-    else
-        warn "subfinder not installed, skipping."
-        touch "$out_dir/subs_subfinder.txt"
-    fi
-
-    # Assetfinder
-    if command -v assetfinder &> /dev/null; then
-        info "Running Assetfinder..."
-        assetfinder --subs-only "$target" > "$out_dir/subs_assetfinder.txt" 2>/dev/null
-        success "Assetfinder done — $(wc -l < "$out_dir/subs_assetfinder.txt") results"
-    else
-        warn "assetfinder not installed, skipping."
-        touch "$out_dir/subs_assetfinder.txt"
-    fi
-
-    # Merge & Deduplicate
-    cat "$out_dir/subs_subfinder.txt" "$out_dir/subs_assetfinder.txt" 2>/dev/null | sort -u > "$out_dir/all_subdomains.txt"
-    local total
-    total=$(wc -l < "$out_dir/all_subdomains.txt")
-    success "Total unique subdomains: $total"
-
-    # Live Probing with httpx
-    if command -v httpx &> /dev/null; then
-        info "Probing for live hosts (httpx)..."
-        httpx -l "$out_dir/all_subdomains.txt" -sc -title -silent -nc > "$out_dir/live_results.txt"
-
-        # Sort by status codes
-        grep "\[20" "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_200.txt"
-        grep "\[30" "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_300.txt"
-        grep "\[40" "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_400.txt"
-        grep "\[50" "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_500.txt"
-
-        success "Live Probing Complete:"
-        echo -e "        ${GREEN}200 OK:${RESET}        $(wc -l < "$out_dir/status_200.txt")"
-        echo -e "        ${YELLOW}3xx Redirect:${RESET}  $(wc -l < "$out_dir/status_300.txt")"
-        echo -e "        ${RED}4xx Forbidden:${RESET} $(wc -l < "$out_dir/status_400.txt")"
-        echo -e "        ${RED}5xx Error:${RESET}     $(wc -l < "$out_dir/status_500.txt")"
-    else
-        warn "httpx not installed, skipping live probe."
-    fi
+    local target=$1 out_dir=$2
+    header "Subdomain discovery — $target"
+    : > "$out_dir/subs_subfinder.txt"; : > "$out_dir/subs_assetfinder.txt"; : > "$out_dir/live_results.txt"
+    if command_exists subfinder; then
+        info "Running subfinder..."
+        subfinder -d "$target" -silent > "$out_dir/subs_subfinder.txt" 2>"$out_dir/subfinder.stderr" || warn "subfinder did not complete; see subfinder.stderr"
+    else warn "subfinder is not installed; skipping."; fi
+    if command_exists assetfinder; then
+        info "Running assetfinder..."
+        assetfinder --subs-only "$target" > "$out_dir/subs_assetfinder.txt" 2>"$out_dir/assetfinder.stderr" || warn "assetfinder did not complete; see assetfinder.stderr"
+    else warn "assetfinder is not installed; skipping."; fi
+    cat "$out_dir/subs_subfinder.txt" "$out_dir/subs_assetfinder.txt" | sed '/^$/d' | sort -u > "$out_dir/all_subdomains.txt"
+    success "$(line_count "$out_dir/all_subdomains.txt") unique subdomains found"
+    if command_exists httpx && [[ -s "$out_dir/all_subdomains.txt" ]]; then
+        info "Probing discovered hosts with httpx..."
+        httpx -l "$out_dir/all_subdomains.txt" -sc -title -silent -nc > "$out_dir/live_results.txt" 2>"$out_dir/httpx.stderr" || warn "httpx did not complete; see httpx.stderr"
+        grep -E '\[20[0-9]\]' "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_200.txt" || true
+        grep -E '\[30[0-9]\]' "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_300.txt" || true
+        grep -E '\[40[0-9]\]' "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_400.txt" || true
+        grep -E '\[50[0-9]\]' "$out_dir/live_results.txt" | awk '{print $1}' > "$out_dir/status_500.txt" || true
+        success "$(line_count "$out_dir/live_results.txt") live hosts recorded"
+    elif ! command_exists httpx; then warn "httpx is not installed; skipping host probing."; fi
 }
 
-# --- WAF & VirusTotal ---
 run_waf() {
-    local target="$1"
-    local out_dir="$2"
-    header "WAF DETECTION & VIRUSTOTAL — $target"
-
-    # WAF Check
-    if command -v wafw00f &> /dev/null; then
-        info "Detecting WAF with wafw00f..."
-        wafw00f "$target" > "$out_dir/waf.txt"
-        success "WAF results saved → waf.txt"
-    else
-        warn "wafw00f not installed, skipping WAF detection."
-    fi
-
-    # VirusTotal
-    if [ "$VT_API_KEY" != "add_your_api_key" ] && [ -n "$VT_API_KEY" ]; then
-        info "Querying VirusTotal API..."
-        curl --silent --request GET \
-          --url "https://www.virustotal.com/api/v3/domains/$target" \
-          --header "x-apikey: $VT_API_KEY" \
-          -o "$out_dir/vt_report.json"
-        success "VirusTotal report saved → vt_report.json"
-    else
-        warn "VirusTotal API key not configured. Edit VT_API_KEY in the script."
-    fi
-}
-
-# --- URL Gathering ---
-run_gau() {
-    local target="$1"
-    local out_dir="$2"
-    header "URL GATHERING — $target"
-
-    # Gau
-    if command -v gau &> /dev/null; then
-        info "Running Gau..."
-        gau "$target" > "$out_dir/gau.txt" 2>/dev/null
-        success "Gau done — $(wc -l < "$out_dir/gau.txt") URLs"
-    else
-        warn "gau not installed, skipping."
-        touch "$out_dir/gau.txt"
-    fi
-
-    # Katana
-    if command -v katana &> /dev/null; then
-        info "Running Katana (depth 3, JS crawl)..."
-        katana -u "https://$target" -d 3 -jc -o "$out_dir/katana.txt" > /dev/null 2>&1
-        success "Katana done — $(wc -l < "$out_dir/katana.txt") URLs"
-    else
-        warn "katana not installed, skipping."
-        touch "$out_dir/katana.txt"
-    fi
-
-    # Merge & Deduplicate
-    cat "$out_dir/gau.txt" "$out_dir/katana.txt" 2>/dev/null | sort -u > "$out_dir/all_urls.txt"
-    local count
-    count=$(wc -l < "$out_dir/all_urls.txt")
-    success "Total unique URLs collected: $count"
-}
-
-# --- Recon Wrapper (for interactive menu) ---
-run_recon_interactive() {
-    read -p "    Enter target domain (e.g. example.com): " recon_target
-    if [ -z "$recon_target" ]; then
-        error "No domain specified."
-        return
-    fi
-    local date_str
-    date_str=$(date +%Y-%m-%d_%H%M)
-    local recon_dir="${recon_target}_recon_${date_str}"
-    mkdir -p "$recon_dir"
-    info "Output directory: $recon_dir"
-    "$@" "$recon_target" "$recon_dir"
-    divider
-    success "Results saved in: ${GREEN}$recon_dir${RESET}"
-}
-
-# ════════════════════════════════════════════════════════════════════
-#                       LINUX UTILITY MODULES
-# ════════════════════════════════════════════════════════════════════
-
-# --- Nmap Scan ---
-nmap_scan() {
-    header "NMAP NETWORK SCANNER"
-    read -p "    Enter IP or domain to scan: " target
-    if [ -z "$target" ]; then error "No target specified."; return; fi
-
-    if command -v nmap &> /dev/null; then
-        info "Scanning $target ..."
-        nmap -v "$target"
-        success "Nmap scan complete."
-    else
-        error "nmap is not installed."
-    fi
-}
-
-# --- Directory Enumeration ---
-dir_enum() {
-    header "DIRECTORY ENUMERATION"
-    read -p "    Enter website URL (e.g. https://example.com): " url
-    read -p "    Enter wordlist file path: " wordlist
-
-    if [ -z "$url" ]; then error "No URL specified."; return; fi
-    if [ ! -f "$wordlist" ]; then error "Wordlist file not found: $wordlist"; return; fi
-
-    info "Starting directory brute-force on $url"
-    local found=0
-    while IFS= read -r dir; do
-        code=$(curl -s -o /dev/null -w "%{http_code}" "$url/$dir")
-        if [ "$code" == "200" ] || [ "$code" == "301" ] || [ "$code" == "302" ]; then
-            success "FOUND: $url/$dir  [Status: $code]"
-            ((found++))
+    local target=$1 out_dir=$2
+    header "WAF and VirusTotal — $target"
+    if command_exists wafw00f; then
+        info "Running wafw00f..."
+        wafw00f "$target" > "$out_dir/waf.txt" 2>"$out_dir/wafw00f.stderr" || warn "wafw00f did not complete; see wafw00f.stderr"
+        success "WAF output saved to waf.txt"
+    else warn "wafw00f is not installed; skipping WAF detection."; fi
+    if [[ -n "${VT_API_KEY:-}" ]]; then
+        info "Requesting VirusTotal domain report..."
+        if curl "${CURL_COMMON[@]}" --request GET --url "https://www.virustotal.com/api/v3/domains/$target" --header "x-apikey: $VT_API_KEY" --output "$out_dir/vt_report.json"; then
+            success "VirusTotal report saved to vt_report.json"
+        else
+            rm -f -- "$out_dir/vt_report.json"
+            warn "VirusTotal request failed; check VT_API_KEY and connectivity."
         fi
-    done < "$wordlist"
-    echo ""
-    success "Enumeration complete. $found directories found."
+    else warn "VT_API_KEY is not set; skipping VirusTotal lookup."; fi
 }
 
-# --- Browse Web ---
-browse_web() {
-    header "WEB BROWSER"
-    read -p "    Enter URL to open: " url
-    if [ -z "$url" ]; then error "No URL specified."; return; fi
-
-    if command -v xdg-open &> /dev/null; then
-        xdg-open "$url"
-        success "Opened in default browser."
-    elif command -v open &> /dev/null; then
-        open "$url"
-        success "Opened in default browser."
-    else
-        warn "No graphical browser found."
-        read -p "    View page source with curl? (y/n): " choice
-        if [ "$choice" == "y" ]; then
-            curl -s "$url"
-        fi
-    fi
+run_urls() {
+    local target=$1 out_dir=$2
+    header "URL gathering — $target"
+    : > "$out_dir/gau.txt"; : > "$out_dir/katana.txt"
+    if command_exists gau; then
+        info "Running gau..."
+        gau "$target" > "$out_dir/gau.txt" 2>"$out_dir/gau.stderr" || warn "gau did not complete; see gau.stderr"
+    else warn "gau is not installed; skipping."; fi
+    if command_exists katana; then
+        info "Running katana..."
+        katana -u "https://$target" -d 3 -jc -silent -o "$out_dir/katana.txt" > /dev/null 2>"$out_dir/katana.stderr" || warn "katana did not complete; see katana.stderr"
+    else warn "katana is not installed; skipping."; fi
+    cat "$out_dir/gau.txt" "$out_dir/katana.txt" | sed '/^$/d' | sort -u > "$out_dir/all_urls.txt"
+    success "$(line_count "$out_dir/all_urls.txt") unique URLs collected"
 }
 
-# --- Get Public IP ---
-get_ip() {
-    header "PUBLIC IP ADDRESS"
-    info "Fetching your public IP..."
-    local ip
-    ip=$(curl -s ifconfig.me)
-    if [ -n "$ip" ]; then
-        success "Your Public IP: ${GREEN}$ip${RESET}"
-    else
-        error "Could not fetch IP. Check your internet connection."
-    fi
-}
-
-# --- IP Lookup ---
-check_ip() {
-    header "IP GEOLOCATION LOOKUP"
-    read -p "    Enter IP address: " ip
-    if [ -z "$ip" ]; then error "No IP specified."; return; fi
-
-    info "Looking up $ip ..."
-    local result
-    result=$(curl -s "http://ip-api.com/json/$ip")
-    if command -v python3 &> /dev/null; then
-        echo "$result" | python3 -m json.tool
-    else
-        echo "$result"
-    fi
-}
-
-# --- Short URL Checker ---
-short_url_info() {
-    header "SHORT URL REDIRECT CHECKER"
-    read -p "    Enter shortened URL: " url
-    if [ -z "$url" ]; then error "No URL specified."; return; fi
-
-    info "Tracing redirects..."
-    local location
-    location=$(curl -sLI "$url" | grep -i "location:" | cut -d " " -f2-)
-
-    if [ -z "$location" ]; then
-        warn "No redirect found. The URL might not be shortened."
-    else
-        success "Redirect chain:"
-        echo "$location" | while IFS= read -r loc; do
-            echo -e "        ${CYAN}→${RESET} $loc"
-        done
-    fi
-}
-
-# --- System Monitor ---
-system_monitor() {
-    header "SYSTEM RESOURCE MONITOR"
-
-    echo -e "\n    ${BOLD}${CYAN}CPU Usage:${RESET}"
-    if command -v top &> /dev/null; then
-        top -bn1 2>/dev/null | grep "Cpu(s)" | sed 's/^/    /'
-    else
-        warn "top not available on this system."
-    fi
-
-    echo -e "\n    ${BOLD}${CYAN}Memory Usage:${RESET}"
-    if command -v free &> /dev/null; then
-        free -h 2>/dev/null | sed 's/^/    /'
-    else
-        warn "free not available on this system."
-    fi
-
-    echo -e "\n    ${BOLD}${CYAN}Disk Usage:${RESET}"
-    df -h 2>/dev/null | sed 's/^/    /'
-}
-
-# --- Internet Speed ---
-internet_speed() {
-    header "INTERNET SPEED TEST"
-    if command -v speedtest-cli &> /dev/null; then
-        info "Running speed test (this may take a moment)..."
-        speedtest-cli --simple | sed 's/^/    /'
-    else
-        error "speedtest-cli is not installed."
-        echo -e "    Install it: ${CYAN}pip install speedtest-cli${RESET}"
-    fi
-}
-
-# --- Password Generator ---
-password_gen() {
-    header "RANDOM PASSWORD GENERATOR"
-    read -p "    Password length (default 16): " len
-    len=${len:-16}
-
-    # Validate numeric input
-    if ! [[ "$len" =~ ^[0-9]+$ ]]; then
-        error "Invalid length. Using default (16)."
-        len=16
-    fi
-
-    local password
-    password=$(head /dev/urandom | tr -dc 'A-Za-z0-9!@#$%^&*()_+-=' | head -c "$len")
-    echo ""
-    success "Generated Password:"
-    echo -e "    ${BOLD}${GREEN}$password${RESET}"
-    echo ""
-    info "Password length: $len characters"
-}
-
-# --- Weather Info ---
-weather_info() {
-    header "WEATHER INFORMATION"
-    read -p "    Enter city name (e.g. Puri): " city
-    if [ -z "$city" ]; then error "No city specified."; return; fi
-
-    info "Fetching weather for $city..."
-    curl -s "https://wttr.in/${city}?format=v2"
-}
-
-# --- YouTube Downloader ---
-youtube_download() {
-    header "YOUTUBE VIDEO DOWNLOADER"
-    if ! command -v yt-dlp &> /dev/null; then
-        error "yt-dlp is not installed."
-        echo -e "    Install it: ${CYAN}pip install yt-dlp${RESET}"
-        return
-    fi
-
-    read -p "    Enter YouTube URL: " yt_url
-    if [ -z "$yt_url" ]; then error "No URL specified."; return; fi
-
-    read -p "    Format — (1) mp4 video  (2) mp3 audio  [1]: " fmt_choice
-    fmt_choice=${fmt_choice:-1}
-
-    case $fmt_choice in
-        1)
-            info "Downloading video (best quality)..."
-            yt-dlp -f "bestvideo+bestaudio" "$yt_url"
-            ;;
-        2)
-            info "Downloading audio (mp3)..."
-            yt-dlp -x --audio-format mp3 "$yt_url"
-            ;;
-        *)
-            warn "Invalid choice. Downloading default format..."
-            yt-dlp "$yt_url"
-            ;;
+run_recon() {
+    local mode=$1 target=${2,,} scan_dir
+    if ! validate_domain "$target"; then error "Use a valid domain such as example.com."; return 2; fi
+    case "$mode" in subs|waf|urls|all) ;; *) error "Unknown recon module: $mode"; return 2 ;; esac
+    scan_dir=$(create_scan_directory "$target") || { error "Could not create results directory."; return 1; }
+    banner; info "Target: $target"; info "Output: $scan_dir"
+    case "$mode" in
+        subs) run_subs "$target" "$scan_dir" ;;
+        waf)  run_waf "$target" "$scan_dir" ;;
+        urls) run_urls "$target" "$scan_dir" ;;
+        all)  run_subs "$target" "$scan_dir"; run_waf "$target" "$scan_dir"; run_urls "$target" "$scan_dir" ;;
     esac
-    success "Download complete!"
+    write_summary "$target" "$scan_dir" "$mode"
+    success "Scan complete. Summary: $scan_dir/summary.md"
 }
 
-# ════════════════════════════════════════════════════════════════════
-#                       INTERACTIVE MENU
-# ════════════════════════════════════════════════════════════════════
+port_scan() {
+    local target=$1
+    if ! validate_host "$target"; then error "Use a valid domain or IPv4 address."; return 2; fi
+    if ! command_exists nmap; then error "nmap is not installed. Run '$0 doctor' for requirements."; return 1; fi
+    header "Port scan — $target"; nmap -v "$target"
+}
 
-show_menu() {
-    echo ""
-    if command -v lolcat &> /dev/null; then
-        echo "+══════════════════════════════════════════════════════+" | lolcat
-        echo "│          KILLERPENGUIN MASTER TOOLKIT v2.0          │" | lolcat
-        echo "+══════════════════════════════════════════════════════+" | lolcat
-    else
-        echo -e "${MAGENTA}+══════════════════════════════════════════════════════+${RESET}"
-        echo -e "${MAGENTA}│${BOLD}          KILLERPENGUIN MASTER TOOLKIT v2.0          ${RESET}${MAGENTA}│${RESET}"
-        echo -e "${MAGENTA}+══════════════════════════════════════════════════════+${RESET}"
-    fi
-    echo ""
-    echo -e "  ${RED}${BOLD}🔥 BUG BOUNTY RECON${RESET}"
-    echo -e "  ${WHITE}  1)${RESET} Full Recon (Subs + Live Probe)"
-    echo -e "  ${WHITE}  2)${RESET} WAF Detection + VirusTotal"
-    echo -e "  ${WHITE}  3)${RESET} URL Gathering (Gau + Katana)"
-    echo -e "  ${WHITE}  4)${RESET} Nmap Network Scan"
-    echo -e "  ${WHITE}  5)${RESET} Directory Enumeration"
-    echo ""
-    echo -e "  ${CYAN}${BOLD}🐧 LINUX UTILITIES${RESET}"
-    echo -e "  ${WHITE}  6)${RESET} Get My Public IP"
-    echo -e "  ${WHITE}  7)${RESET} IP Geolocation Lookup"
-    echo -e "  ${WHITE}  8)${RESET} Short URL Checker"
-    echo -e "  ${WHITE}  9)${RESET} System Resource Monitor"
-    echo -e "  ${WHITE} 10)${RESET} Internet Speed Test"
-    echo -e "  ${WHITE} 11)${RESET} Password Generator"
-    echo -e "  ${WHITE} 12)${RESET} Weather Info"
-    echo -e "  ${WHITE} 13)${RESET} YouTube Video Download"
-    echo -e "  ${WHITE} 14)${RESET} Browse Web"
-    echo ""
-    echo -e "  ${YELLOW}${BOLD}⚙️  SYSTEM${RESET}"
-    echo -e "  ${WHITE} 15)${RESET} Check Dependencies"
-    echo -e "  ${WHITE} 16)${RESET} Clear Terminal"
-    echo -e "  ${WHITE}  0)${RESET} Exit"
-    echo ""
+show_report() {
+    local dir=$1
+    if [[ ! -d "$dir" || ! -f "$dir/summary.md" ]]; then error "No KillerPenguin result directory found: $dir"; return 2; fi
+    cat "$dir/summary.md"
+}
+
+get_public_ip() { header "Public IP"; curl "${CURL_COMMON[@]}" https://api.ipify.org && printf '\n'; }
+ip_lookup() {
+    local ip; read -r -p '  IP address: ' ip
+    [[ -n "$ip" ]] || { error "No IP supplied."; return; }
+    header "IP lookup — $ip"; curl "${CURL_COMMON[@]}" "https://ipwho.is/$ip" || error "IP lookup failed."; printf '\n'
+}
+short_url_info() {
+    local url; read -r -p '  Short URL (http/https): ' url
+    [[ "$url" =~ ^https?:// ]] || { error "Enter an http(s) URL."; return; }
+    header "Redirect chain"
+    curl "${CURL_COMMON[@]}" -I "$url" | awk 'BEGIN{IGNORECASE=1} /^location:/{print "  -> " $0}' || error "Could not inspect URL."
+}
+password_gen() {
+    local length; read -r -p '  Password length [16]: ' length; length=${length:-16}
+    [[ "$length" =~ ^[1-9][0-9]{0,2}$ ]] || { error "Choose a length from 1 to 999."; return; }
+    header "Generated password"; LC_ALL=C tr -dc 'A-Za-z0-9!@#$%^&*()_+-=' < /dev/urandom | head -c "$length"; printf '\n'
+}
+weather_info() {
+    local city; read -r -p '  City: ' city; [[ -n "$city" ]] || { error "No city supplied."; return; }
+    header "Weather — $city"; curl "${CURL_COMMON[@]}" "https://wttr.in/${city// /+}?format=v2" || error "Weather lookup failed."
 }
 
 interactive_mode() {
+    local choice target
     banner
-    echo -e "  ${DIM}Bug Bounty Recon + Linux Utilities — All in One${RESET}"
-    echo -e "  ${DIM}Author: Sumit | Type 0 to exit${RESET}"
-    echo ""
-
     while true; do
-        show_menu
-        read -p "  ➤ Enter your choice: " choice
-
-        case $choice in
-            1)  run_recon_interactive run_subs ;;
-            2)  run_recon_interactive run_waf ;;
-            3)  run_recon_interactive run_gau ;;
-            4)  nmap_scan ;;
-            5)  dir_enum ;;
-            6)  get_ip ;;
-            7)  check_ip ;;
-            8)  short_url_info ;;
-            9)  system_monitor ;;
-            10) internet_speed ;;
-            11) password_gen ;;
-            12) weather_info ;;
-            13) youtube_download ;;
-            14) browse_web ;;
-            15) check_dependencies ;;
-            16) clear && banner ;;
-            0)
-                echo ""
-                if command -v lolcat &> /dev/null; then
-                    echo "  Exiting KillerPenguin... Stay dangerous! 🐧" | lolcat
-                else
-                    echo -e "  ${CYAN}Exiting KillerPenguin... Stay dangerous! 🐧${RESET}"
-                fi
-                echo ""
-                exit 0
-                ;;
-            *)
-                error "Invalid option. Please choose 0-16."
-                ;;
+        cat <<'EOF'
+  1) Recon: all modules       6) Public IP
+  2) Recon: subdomains        7) IP lookup
+  3) Recon: WAF/VT            8) Redirect checker
+  4) Recon: URLs              9) Password generator
+  5) Port scan               10) Weather
+ 11) Environment check       12) Show help
+  0) Exit
+EOF
+        read -r -p '  Select an option: ' choice
+        case "$choice" in
+            1|2|3|4)
+                read -r -p '  Domain: ' target
+                case "$choice" in 1) run_recon all "$target";; 2) run_recon subs "$target";; 3) run_recon waf "$target";; 4) run_recon urls "$target";; esac ;;
+            5) read -r -p '  Host: ' target; port_scan "$target" ;;
+            6) get_public_ip ;; 7) ip_lookup ;; 8) short_url_info ;; 9) password_gen ;; 10) weather_info ;;
+            11) check_dependencies ;; 12) usage ;; 0) printf 'Bye.\n'; return 0 ;;
+            *) error "Choose an option from the menu." ;;
         esac
-
-        echo ""
-        divider
-        read -p "  Press Enter to continue..." _
+        printf '\n'; read -r -p '  Press Enter to continue...' _
     done
 }
 
-# ════════════════════════════════════════════════════════════════════
-#                         MAIN ENTRY POINT
-# ════════════════════════════════════════════════════════════════════
+legacy_mode() {
+    local target='' do_subs=false do_waf=false do_urls=false do_all=false
+    OPTIND=1
+    while getopts ':d:swgah' opt; do
+        case "$opt" in
+            d) target=$OPTARG ;; s) do_subs=true ;; w) do_waf=true ;; g) do_urls=true ;; a) do_all=true ;; h) usage; return 0 ;;
+            :) error "Option -$OPTARG needs a value."; return 2 ;;
+            *) usage; return 2 ;;
+        esac
+    done
+    [[ -n "$target" ]] || { error "Use -d <domain>."; return 2; }
+    if "$do_all"; then run_recon all "$target"; return; fi
+    if "$do_subs"; then run_recon subs "$target"; fi
+    if "$do_waf"; then run_recon waf "$target"; fi
+    if "$do_urls"; then run_recon urls "$target"; fi
+    if ! "$do_subs" && ! "$do_waf" && ! "$do_urls"; then error "Choose -s, -w, -g, or -a."; return 2; fi
+}
 
-# If no arguments → interactive mode
-if [ $# -eq 0 ]; then
-    interactive_mode
-    exit 0
-fi
-
-# Handle --check and --help
-if [ "$1" == "--check" ]; then
-    banner
-    check_dependencies
-    exit 0
-fi
-
-if [ "$1" == "--help" ]; then
-    usage
-fi
-
-# CLI Flag Mode — Parse arguments
-TARGET=""
-DO_SUBS=false
-DO_WAF=false
-DO_GAU=false
-DO_ALL=false
-
-while getopts "d:swgah" opt; do
-    case $opt in
-        d) TARGET="$OPTARG" ;;
-        s) DO_SUBS=true ;;
-        w) DO_WAF=true ;;
-        g) DO_GAU=true ;;
-        a) DO_ALL=true ;;
-        h) usage ;;
-        *) usage ;;
+main() {
+    require_linux || return 1
+    case "${1:-menu}" in
+        menu) interactive_mode ;;
+        doctor|--check) check_dependencies ;;
+        --version|-V) printf '%s %s\n' "$APP_NAME" "$VERSION" ;;
+        --help|-h|help) usage ;;
+        recon) [[ $# -eq 3 ]] || { usage; return 2; }; run_recon "$2" "$3" ;;
+        scan) [[ "${2:-}" == ports && $# -eq 3 ]] || { usage; return 2; }; port_scan "$3" ;;
+        report) [[ $# -eq 2 ]] || { usage; return 2; }; show_report "$2" ;;
+        -*) legacy_mode "$@" ;;
+        *) error "Unknown command: $1"; usage; return 2 ;;
     esac
-done
+}
 
-# Validate target
-if [ -z "$TARGET" ]; then
-    error "No target domain specified. Use -d <domain>"
-    usage
-fi
-
-# Setup output directory
-DATE=$(date +%Y-%m-%d_%H%M)
-OUT_DIR="${TARGET}_recon_${DATE}"
-mkdir -p "$OUT_DIR"
-
-banner
-echo -e "  ${BOLD}Target:${RESET}  ${GREEN}$TARGET${RESET}"
-echo -e "  ${BOLD}Output:${RESET}  ${CYAN}$OUT_DIR${RESET}"
-divider
-
-# Run selected or all modules
-if [ "$DO_ALL" = true ]; then
-    DO_SUBS=true
-    DO_WAF=true
-    DO_GAU=true
-fi
-
-if [ "$DO_SUBS" = true ]; then run_subs "$TARGET" "$OUT_DIR"; fi
-if [ "$DO_WAF" = true ];  then run_waf "$TARGET" "$OUT_DIR"; fi
-if [ "$DO_GAU" = true ];  then run_gau "$TARGET" "$OUT_DIR"; fi
-
-# Final Summary
-echo ""
-divider
-success "Scan complete! All results saved in: ${GREEN}$OUT_DIR${RESET}"
-echo ""
-
-# Show file listing
-echo -e "  ${BOLD}Output Files:${RESET}"
-ls -lh "$OUT_DIR" 2>/dev/null | tail -n +2 | while IFS= read -r line; do
-    echo -e "    $line"
-done
-echo ""
+main "$@"
