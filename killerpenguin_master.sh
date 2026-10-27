@@ -7,10 +7,11 @@ set -o pipefail
 readonly APP_NAME="KillerPenguin"
 readonly VERSION="2.1.0"
 if [[ "${BASH_SOURCE[0]}" == */* ]]; then
-    readonly SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
+    SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)"
 else
-    readonly SCRIPT_DIR="$PWD"
+    SCRIPT_DIR="$PWD"
 fi
+readonly SCRIPT_DIR
 readonly OUTPUT_ROOT="${KILLERPENGUIN_OUTPUT_DIR:-$SCRIPT_DIR/results}"
 readonly CURL_COMMON=(--fail --silent --show-error --location --connect-timeout 10 --max-time 45)
 
