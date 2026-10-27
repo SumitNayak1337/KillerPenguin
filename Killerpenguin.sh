@@ -8,7 +8,7 @@ check_dependencies() {
     commands=("nmap" "curl" "wget" "speedtest-cli" "lolcat" "yt-dlp")
     
     for cmd in "${commands[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
+        if ! command -v "$cmd" > /dev/null 2>&1; then
             echo "Warning: $cmd is not installed. Some features may not work."
         fi
     done
@@ -16,20 +16,20 @@ check_dependencies() {
 
 nmap_scan() {
     echo "Nmap Network Scanner"
-    read -p "Enter IP address or domain to scan: " target
+    read -rp "Enter IP address or domain to scan: " target
     nmap -v "$target"
 }
 
 dir_enum() {
     echo "Directory Enumeration"
-    read -p "Enter website URL: " url
-    read -p "Enter wordlist file path: " wordlist
+    read -rp "Enter website URL: " url
+    read -rp "Enter wordlist file path: " wordlist
     
     if [ -f "$wordlist" ]; then
         echo "Starting directory enumeration on $url"
         while IFS= read -r dir; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "$url/$dir")
-            if [ "$code" == "200" ] || [ "$code" == "301" ] || [ "$code" == "302" ]; then
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url/$dir")
+            if [ "$code" = "200" ] || [ "$code" = "301" ] || [ "$code" = "302" ]; then
                 echo "Found: $url/$dir (Status: $code)"
             fi
         done < "$wordlist"
@@ -40,15 +40,15 @@ dir_enum() {
 
 browse_web() {
     echo "Browse Web"
-    read -p "Enter URL: " url
-    if command -v xdg-open &> /dev/null; then
+    read -rp "Enter URL: " url
+    if command -v xdg-open > /dev/null 2>&1; then
         xdg-open "$url"
-    elif command -v open &> /dev/null; then
+    elif command -v open > /dev/null 2>&1; then
         open "$url"
     else
         echo "Cannot open browser. Try using curl to view page content:"
-        read -p "View page content with curl? (y/n): " choice
-        if [ "$choice" == "y" ]; then
+        read -rp "View page content with curl? (y/n): " choice
+        if [ "$choice" = "y" ]; then
             curl -s "$url"
         fi
     fi
@@ -62,15 +62,15 @@ get_ip() {
 
 check_ip() {
     echo "IP Information Lookup"
-    read -p "Enter IP Address: " ip
+    read -rp "Enter IP Address: " ip
     curl -s "http://ip-api.com/json/$ip" | python3 -m json.tool
 }
 
 short_url_info() {
     echo "URL Redirect Checker"
-    read -p "Enter shortened URL: " url
+    read -rp "Enter shortened URL: " url
     
-    location=$(curl -s -I "$url" | grep -i "location:" | cut -d " " -f2-)
+    location=$(curl -sI "$url" | grep -i "location:" | cut -d " " -f2-)
     
     if [ -z "$location" ]; then
         echo "No Redirect found. The URL might not be shortened."
@@ -101,20 +101,20 @@ internet_speed() {
 password_gen() {
     echo "Generating a Random Password..."
     echo ""
-    head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16
+    tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16
     echo ""
 }
 
 weather_info() {
     echo "Fetching Weather Information"
-    read -p "Enter City name (Ex- Puri): " city
+    read -rp "Enter City name (Ex- Puri): " city
     curl -s "https://wttr.in/$city?format=3"
 }
 
 youtube_download() {
     echo "YouTube Video Downloader"
-    read -p "Enter YouTube URL: " yt_url
-    read -p "Enter Download Format (e.g., mp4, mp3): " format
+    read -rp "Enter YouTube URL: " yt_url
+    read -rp "Enter Download Format (e.g., mp4, mp3): " format
     yt-dlp -f "$format" "$yt_url"
     echo "Download complete"
 }
@@ -123,7 +123,7 @@ youtube_download() {
 check_dependencies
 
 # ASCII Penguin with sharp goggles
-cat << "EOF" | lolcat
+cat <<'EOF' | lolcat
                       .---.
                      /     \
                     | o _ o |
@@ -158,7 +158,7 @@ while true; do
     echo "|                        | 13) Exit              |"
     echo "+------------------------------------------------+"
 
-    read -p "Enter your choice (1-13): " choice
+    read -rp "Enter your choice (1-13): " choice
     case $choice in
         1) nmap_scan ;;
         2) dir_enum ;;
